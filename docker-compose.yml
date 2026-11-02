@@ -1,0 +1,101 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: healthcare-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - healthcare-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: healthcare-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - healthcare-net
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: healthcare-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Web UI
+    networks:
+      - healthcare-net
+
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: healthcare-auth-service
+    restart: unless-stopped
+    ports:
+      - "${AUTH_SERVICE_PORT:-3001}:3001"
+    environment:
+      PORT: 3001
+      DATABASE_URL: ${AUTH_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/auth_db?schema=public}
+      JWT_SECRET: ${JWT_SECRET:-supersecret-healthcare-jwt-key-change-in-production}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - healthcare-net
+
+  schedule-service:
+    build:
+      context: ./schedule-service
+      dockerfile: Dockerfile
+    container_name: healthcare-schedule-service
+    restart: unless-stopped
+    ports:
+      - "${SCHEDULE_SERVICE_PORT:-3002}:3002"
+    environment:
+      PORT: 3002
+      DATABASE_URL: ${SCHEDULE_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/schedule_db?schema=public}
+      AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth-service:3001/graphql}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      MAIL_HOST: ${MAIL_HOST:-mailpit}
+      MAIL_PORT: ${MAIL_PORT:-1025}
+      MAIL_FROM: ${MAIL_FROM:-Healthcare System <noreply@healthcare.local>}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    networks:
+      - healthcare-net
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  healthcare-net:
+    driver: bridge

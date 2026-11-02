@@ -1,0 +1,50 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id        String     @id @default(uuid())
+  name      String
+  email     String     @unique
+  schedules Schedule[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("customers")
+}
+
+model Doctor {
+  id        String     @id @default(uuid())
+  name      String
+  schedules Schedule[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("doctors")
+}
+
+model Schedule {
+  id          String   @id @default(uuid())
+  objective   String
+  customerId  String
+  doctorId    String
+  scheduledAt DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  doctor   Doctor   @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+
+  @@unique([doctorId, scheduledAt])
+  @@index([customerId])
+  @@index([doctorId])
+  @@index([scheduledAt])
+  @@map("schedules")
+}
+
