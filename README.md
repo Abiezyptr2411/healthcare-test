@@ -185,16 +185,13 @@ Seluruh konfigurasi dikelola melalui environment variables. Berikut daftar lengk
 | `POSTGRES_PASSWORD`     | `postgres`                                                               |     Database     | Password superuser PostgreSQL                               |
 | `POSTGRES_PORT`         | `5432`                                                                   |     Database     | Port PostgreSQL pada host                                   |
 | `AUTH_SERVICE_PORT`     | `3001`                                                                   |   Auth Service   | Port HTTP untuk Auth Service                                |
-| `AUTH_DATABASE_URL`     | `postgresql://postgres:postgres@postgres:5432/auth_db?schema=public`     |   Auth Service   | Connection string PostgreSQL ke database `auth_db`          |
 | `JWT_SECRET`            | `supersecret-healthcare-jwt-key-...`                                     |   Auth Service   | Kunci rahasia untuk menandatangani token JWT                |
 | `JWT_EXPIRES_IN`        | `1h`                                                                     |   Auth Service   | Masa aktif masa berlaku token JWT (misal: `1h`, `7d`)       |
 | `SCHEDULE_SERVICE_PORT` | `3002`                                                                   | Schedule Service | Port HTTP untuk Schedule Service                            |
-| `SCHEDULE_DATABASE_URL` | `postgresql://postgres:postgres@postgres:5432/schedule_db?schema=public` | Schedule Service | Connection string PostgreSQL ke database `schedule_db`      |
 | `AUTH_SERVICE_URL`      | `http://auth-service:3001/graphql`                                       | Schedule Service | Endpoint internal GraphQL Auth Service untuk validasi token |
-| `REDIS_HOST`            | `redis`                                                                  | Schedule Service | Hostname instance Redis di dalam docker network             |
-| `REDIS_PORT`            | `6379`                                                                   | Schedule Service | Port instance Redis                                         |
-| `MAIL_HOST`             | `mailpit`                                                                | Schedule Service | Hostname SMTP Mailpit untuk pengiriman email mock           |
-| `MAIL_PORT`             | `1025`                                                                   | Schedule Service | Port SMTP Mailpit                                           |
+| `REDIS_PORT`            | `6379`                                                                   |   Host Binding   | Port mapping Redis pada host machine                        |
+| `MAIL_PORT`             | `1025`                                                                   |   Host Binding   | Port mapping SMTP Mailpit pada host                         |
+| `MAIL_UI_PORT`          | `8025`                                                                   |   Host Binding   | Port mapping Web Dashboard Mailpit pada host                |
 | `MAIL_FROM`             | `"Healthcare System <noreply@healthcare.local>"`                         | Schedule Service | Alamat pengirim email notifikasi schedule                   |
 
 ---

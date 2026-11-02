@@ -41,8 +41,8 @@ services:
     container_name: healthcare-mailpit
     restart: unless-stopped
     ports:
-      - "1025:1025" # SMTP
-      - "8025:8025" # Web UI
+      - "${MAIL_PORT:-1025}:1025" # SMTP
+      - "${MAIL_UI_PORT:-8025}:8025" # Web UI
     networks:
       - healthcare-net
 
@@ -56,7 +56,7 @@ services:
       - "${AUTH_SERVICE_PORT:-3001}:3001"
     environment:
       PORT: 3001
-      DATABASE_URL: ${AUTH_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/auth_db?schema=public}
+      DATABASE_URL: ${AUTH_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/auth_db?schema=public}
       JWT_SECRET: ${JWT_SECRET:-supersecret-healthcare-jwt-key-change-in-production}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
     depends_on:
@@ -75,12 +75,12 @@ services:
       - "${SCHEDULE_SERVICE_PORT:-3002}:3002"
     environment:
       PORT: 3002
-      DATABASE_URL: ${SCHEDULE_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/schedule_db?schema=public}
+      DATABASE_URL: ${SCHEDULE_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/schedule_db?schema=public}
       AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth-service:3001/graphql}
       REDIS_HOST: ${REDIS_HOST:-redis}
-      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PORT: 6379
       MAIL_HOST: ${MAIL_HOST:-mailpit}
-      MAIL_PORT: ${MAIL_PORT:-1025}
+      MAIL_PORT: 1025
       MAIL_FROM: ${MAIL_FROM:-Healthcare System <noreply@healthcare.local>}
     depends_on:
       postgres:
