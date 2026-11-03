@@ -541,8 +541,3 @@ npm test -- --coverage
 - `schedule-service`: `CustomerService`, `CustomerResolver`, `DoctorService`, `DoctorResolver`, `ScheduleService`, `ScheduleResolver`, `AuthGuard`
 
 ---
-
-## 7. File Pendukung Testing
-
-- **Contoh GraphQL Lengkap + cURL**: [`graphql-examples.md`](./graphql-examples.md)
-- **Postman Collection**: [`healthcare-scheduling.postman_collection.json`](./healthcare-scheduling.postman_collection.json) — import ke Postman untuk langsung mencoba semua endpoint. Token login otomatis tersimpan ke variabel koleksi.
