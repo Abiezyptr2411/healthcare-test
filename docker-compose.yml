@@ -56,8 +56,8 @@ services:
       - "${AUTH_SERVICE_PORT:-3001}:3001"
     environment:
       PORT: 3001
-      DATABASE_URL: ${AUTH_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/auth_db?schema=public}
-      JWT_SECRET: ${JWT_SECRET:-supersecret-healthcare-jwt-key-change-in-production}
+      DATABASE_URL: ${AUTH_DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
     depends_on:
       postgres:
@@ -75,7 +75,7 @@ services:
       - "${SCHEDULE_SERVICE_PORT:-3002}:3002"
     environment:
       PORT: 3002
-      DATABASE_URL: ${SCHEDULE_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/schedule_db?schema=public}
+      DATABASE_URL: ${SCHEDULE_DATABASE_URL}
       AUTH_SERVICE_URL: ${AUTH_SERVICE_URL:-http://auth-service:3001/graphql}
       REDIS_HOST: ${REDIS_HOST:-redis}
       REDIS_PORT: 6379

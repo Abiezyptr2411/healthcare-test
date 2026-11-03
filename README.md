@@ -2,231 +2,217 @@
 
 Sistem manajemen jadwal konsultasi klinik berbasis **Microservices** yang dibangun menggunakan **NestJS**, **GraphQL (Code-First Apollo Driver)**, **Prisma ORM**, **PostgreSQL**, **Redis**, dan **Docker Compose**.
 
-Sistem ini memisahkan fungsionalitas ke dalam dua microservice independen yang berkomunikasi melalui API:
+Sistem ini memisahkan fungsionalitas ke dalam dua microservice independen:
+1. **Auth Service (Port 3001)** — Registrasi, login, penerbitan JWT, dan validasi token.
+2. **Schedule Service (Port 3002)** — Manajemen Customer, Doctor, dan Schedule, terlindungi oleh autentikasi.
 
-1. **Auth Service (Port 3001)**: Menangani registrasi, otentikasi login, penerbitan JWT token, dan validasi token.
-2. **Schedule Service (Port 3002)**: Menangani manajemen Customer (Pasien), Doctor (Dokter), dan Jadwal Konsultasi (Schedule) yang terlindungi otentikasi.
+> **Catatan Arsitektur Notification**: Email worker (BullMQ + Nodemailer) disatukan di dalam `schedule-service` sebagai sebuah modul (`NotificationModule`), bukan container terpisah. Keputusan ini diambil karena email notification adalah side-effect langsung dari operasi schedule (bukan domain bisnis tersendiri), sehingga menyatukannya lebih sederhana, mengurangi latensi antar-service, dan menghindari overhead orkestrasi container tambahan untuk satu kegunaan. Container pendukung yang ditambahkan di docker-compose adalah **Redis** (queue + cache) dan **Mailpit** (mock SMTP).
 
 ---
 
-## 📑 Daftar Isi
+## Daftar Isi
 
 1. [Cara Menjalankan Project](#1-cara-menjalankan-project)
 2. [Arsitektur Sistem](#2-arsitektur-sistem)
-3. [List Environment Variables](#3-list-environment-variables)
+3. [Environment Variables](#3-environment-variables)
 4. [Contoh GraphQL Queries & Mutations](#4-contoh-graphql-queries--mutations)
 5. [Keputusan Desain & Asumsi](#5-keputusan-desain--asumsi)
-6. [Unit Testing & Code Coverage](#6-unit-testing--code-coverage)
+6. [Unit Testing & Coverage](#6-unit-testing--coverage)
 
 ---
 
 ## 1. Cara Menjalankan Project
 
-### A. Prasyarat
+### Prasyarat
+- **Docker** dan **Docker Compose** terpasang dan berjalan.
 
-- **Docker** dan **Docker Compose** terpasang di komputer Anda.
+### Langkah-langkah
 
-### B. Menjalankan dengan Docker Compose (Satu Perintah - Direkomendasikan)
+**1. Clone repository dan masuk ke folder project:**
+```bash
+git clone <url-repo>
+cd healthcare-scheduling
+```
 
-1. Buka Terminal / PowerShell di folder root project (sesuaikan nama project):
+**2. Salin file environment dari template:**
+```bash
+cp .env.example .env
+```
+Isi nilai `JWT_SECRET` di file `.env` dengan string acak yang kuat (minimal 32 karakter) sebelum menjalankan sistem.
 
-   ```bash
-   cd "path/to/healthcare"
-   ```
+**3. Jalankan seluruh sistem dengan satu perintah:**
+```bash
+docker-compose up --build
+```
 
-2. Pastikan file konfigurasi `.env` telah tersedia (file `.env` default sudah disiapkan di root project, atau duplikasi dari `.env.example`):
+> Opsional: Tambahkan flag `-d` untuk menjalankan di background: `docker-compose up --build -d`
 
-   ```bash
-   cp .env.example .env
-   ```
+**Apa yang terjadi secara otomatis saat startup:**
+1. **PostgreSQL** menyala dan menjalankan `docker/postgres/init.sql` untuk membuat `auth_db` dan `schedule_db`.
+2. **Redis** menyala untuk caching query dan antrean email BullMQ.
+3. **Mailpit** menyala sebagai server SMTP lokal untuk menangkap email.
+4. **auth-service** menunggu PostgreSQL healthy, lalu menjalankan `prisma migrate deploy`, kemudian server aktif.
+5. **schedule-service** menunggu PostgreSQL, Redis, dan auth-service siap, lalu menjalankan `prisma migrate deploy`, kemudian server aktif.
 
-3. Jalankan seluruh sistem:
-   ```bash
-   docker-compose up --build
-   ```
-   _(Opsional: tambahkan `-d` di akhir jika ingin berjalan di background)._
+**4. Akses layanan yang telah berjalan:**
 
-#### Apa yang Terjadi Secara Otomatis Saat Startup:
+| Layanan | URL | Keterangan |
+| :--- | :--- | :--- |
+| Auth Service GraphQL Sandbox | http://localhost:3001/graphql | Register, Login, ValidateToken |
+| Schedule Service GraphQL Sandbox | http://localhost:3002/graphql | Customer, Doctor, Schedule CRUD |
+| Mailpit Web Dashboard | http://localhost:8025 | Inbox email notifikasi |
+| PostgreSQL | localhost:5432 | DB Server (`auth_db` & `schedule_db`) |
+| Redis | localhost:6379 | Cache & BullMQ |
 
-1. **PostgreSQL** menyala dan mengeksekusi script `docker/postgres/init.sql` untuk membuat dua basis data independen: `auth_db` dan `schedule_db`.
-2. **Redis** menyala untuk caching query dan antrean job BullMQ.
-3. **Mailpit** menyala untuk menangkap dan menampilkan email notifikasi lokal.
-4. **Auth Service** dan **Schedule Service** menunggu PostgreSQL siap (`service_healthy`), kemudian mengeksekusi migrasi skema database (`npx prisma migrate deploy`), lalu server NestJS langsung aktif.
-
----
-
-### C. Alamat Port & Akses Layanan
-
-Setelah seluruh container berstatus **running**:
-
-| Layanan              |  Port  | URL Akses                                                      | Deskripsi                                                     |
-| :------------------- | :----: | :------------------------------------------------------------- | :------------------------------------------------------------ |
-| **Auth Service**     | `3001` | [http://localhost:3001/graphql](http://localhost:3001/graphql) | GraphQL Sandbox / Playground untuk Register & Login           |
-| **Schedule Service** | `3002` | [http://localhost:3002/graphql](http://localhost:3002/graphql) | GraphQL Sandbox / Playground untuk Customer, Doctor, Schedule |
-| **Mailpit Web UI**   | `8025` | [http://localhost:8025](http://localhost:8025)                 | Web Dashboard untuk melihat email notifikasi yang terkirim    |
-| **PostgreSQL**       | `5432` | `localhost:5432`                                               | Database server (`auth_db` & `schedule_db`)                   |
-| **Redis**            | `6379` | `localhost:6379`                                               | Redis server untuk caching & antrean BullMQ                   |
-
----
-
-### D. Menghentikan Layanan
-
-Untuk mematikan container, tekan `Ctrl + C` pada terminal atau jalankan:
-
+**5. Menghentikan sistem:**
 ```bash
 docker-compose down
+```
+Untuk menghapus data volume juga (reset penuh):
+```bash
+docker-compose down -v
 ```
 
 ---
 
 ## 2. Arsitektur Sistem
 
-### A. Diagram Arsitektur (Mermaid)
+### Diagram Arsitektur (Mermaid)
 
 ```mermaid
 flowchart TD
-    Client["Client / Browser / Postman"]
+    Client["Client\n(Browser / Postman)"]
 
-    subgraph DockerNetwork["Healthcare Microservice Bridge Network"]
-        direction TB
-
-        subgraph AuthApp["Auth Service (:3001)"]
-            AuthResolver["GraphQL Resolver"]
-            AuthServiceLogic["Auth Service (bcrypt + JWT)"]
-            AuthPrisma["Prisma ORM"]
-            AuthResolver --> AuthServiceLogic --> AuthPrisma
+    subgraph Network["Docker Bridge Network: healthcare-net"]
+        subgraph AuthSvc["auth-service :3001"]
+            A1["GraphQL Resolver"]
+            A2["AuthService\n(bcrypt + JWT)"]
+            A3["Prisma ORM"]
+            A1 --> A2 --> A3
         end
 
-        subgraph ScheduleApp["Schedule Service (:3002)"]
-            AuthGuard["Global AuthGuard"]
-            ScheduleResolvers["GraphQL Resolvers\n(Customer, Doctor, Schedule)"]
-            ScheduleLogic["Business Services\n(Validation & Conflict Checks)"]
-            SchedulePrisma["Prisma ORM"]
-            CacheService["Redis Cache Service"]
-            EmailQueue["BullMQ Producer & Worker"]
-
-            AuthGuard --> ScheduleResolvers --> ScheduleLogic
-            ScheduleLogic --> SchedulePrisma
-            ScheduleLogic --> CacheService
-            ScheduleLogic --> EmailQueue
+        subgraph ScheduleSvc["schedule-service :3002"]
+            S1["Global AuthGuard"]
+            S2["GraphQL Resolvers\n(Customer, Doctor, Schedule)"]
+            S3["Business Services"]
+            S4["Prisma ORM"]
+            S5["RedisCacheService"]
+            S6["NotificationModule\n(BullMQ Worker + Nodemailer)"]
+            S1 --> S2 --> S3
+            S3 --> S4
+            S3 --> S5
+            S3 --> S6
         end
 
-        subgraph Infrastructure["Shared Infrastructure"]
-            PostgreSQL[("PostgreSQL 16\n- auth_db\n- schedule_db")]
-            RedisDB[("Redis 7\n- Cache & BullMQ Queue")]
-            Mailpit["Mailpit SMTP (:1025)\nWeb UI (:8025)"]
-        end
+        PG[("PostgreSQL 16\nauth_db | schedule_db")]
+        RD[("Redis 7\nCache + BullMQ Queue")]
+        MP["Mailpit\nSMTP :1025 | UI :8025"]
     end
 
-    %% Client Interactions
-    Client -->|"1. register / login"| AuthResolver
-    Client -->|"2. Request + Bearer <token>"| AuthGuard
-
-    %% Inter-service HTTP GraphQL Auth Check
-    AuthGuard -.->|"3. HTTP POST validateToken(token)"| AuthResolver
-
-    %% DB & Cache Connections
-    AuthPrisma -->|"auth_db"| PostgreSQL
-    SchedulePrisma -->|"schedule_db"| PostgreSQL
-    CacheService <-->|"Query Cache Get / Invalidate"| RedisDB
-    EmailQueue <-->|"Enqueue & Process Email Jobs"| RedisDB
-    EmailQueue -->|"Send SMTP Notification"| Mailpit
+    Client -->|"register / login"| A1
+    Client -->|"GraphQL + Bearer token"| S1
+    S1 -.->|"HTTP validateToken"| A1
+    A3 --> PG
+    S4 --> PG
+    S5 <--> RD
+    S6 <--> RD
+    S6 -->|"SMTP"| MP
 ```
 
-### B. Diagram Arsitektur (ASCII)
+### Diagram ASCII
 
-```text
-+-----------------------------------------------------------------------------------+
-|                        CLIENT (Browser / Apollo Sandbox / Postman)               |
-+-----------------------------------------------------------------------------------+
-       |                                              |
-       | 1. register / login                          | 2. GraphQL Request
-       |    (returns Bearer Token)                    |    (Header: Authorization: Bearer <token>)
-       v                                              v
-+-------------------------------+             +-------------------------------------+
-|   AUTH SERVICE (Port 3001)    | <.......... |   SCHEDULE SERVICE (Port 3002)      |
-|-------------------------------|  3. HTTP    |-------------------------------------|
-| - GraphQL: code-first Apollo  |  validate   | - Global AuthGuard (Inter-service)  |
-| - bcrypt password hashing     |  token      | - Customer, Doctor, Schedule Modules|
-| - JWT signing & validation    |             | - Double Conflict Prevention        |
-| - Prisma ORM (auth_db)        |             | - BullMQ Queue Producer & Worker    |
-+-------------------------------+             | - Redis Query Cache Layer           |
-       |                                      +-------------------------------------+
-       |                                              |            |           |
-       | Reads/Writes                                 | Reads/     | Caching/  | Enqueue &
-       v                                              v Writes     v Jobs      v Dispatch
-+---------------------------------------------+ +----------+ +-----------+ +--------+
-|                POSTGRESQL 16                | | REDIS 7  | |  MAILPIT  | | MAILPIT|
-|  - auth_db (User credentials)               | | - Cache  | |  (SMTP)   | | (Web)  |
-|  - schedule_db (Customer, Doctor, Schedule) | | - BullMQ | |   :1025   | |  :8025 |
-+---------------------------------------------+ +----------+ +-----------+ +--------+
+```
++------------------------------------------------------------------+
+|               CLIENT (Browser / Apollo Sandbox / Postman)        |
++------------------------------------------------------------------+
+        |                                       |
+        | 1. register / login                   | 2. Bearer <token>
+        | <- accessToken                        |
+        v                                       v
++---------------------+       HTTP       +----------------------------+
+|  AUTH SERVICE :3001 | <-- validate --> |  SCHEDULE SERVICE :3002    |
+|---------------------|  validateToken   |----------------------------|
+| - register          |                 | - Global AuthGuard          |
+| - login             |                 | - Customer CRUD + Pagination|
+| - validateToken     |                 | - Doctor CRUD + Pagination  |
+| - bcrypt + JWT      |                 | - Schedule + Filter + Paging|
+| - Prisma (auth_db)  |                 | - Conflict prevention       |
++---------------------+                 | - BullMQ email queue        |
+        |                               | - Redis cache + fallback    |
+        |                               +----------------------------+
+        |                                       |       |       |
+        v                                       v       v       v
+  +------------+                         +-------+  +--------+  +-------+
+  | PostgreSQL |<----------------------->| Redis |  |Mailpit |  | Redis |
+  | auth_db    |   schedule_db           | Cache |  |SMTP    |  | Queue |
+  +------------+                         +-------+  +--------+  +-------+
 ```
 
-### C. Alur Otentikasi Antar-Service (Inter-Service Auth)
+### Alur Autentikasi Antar-Service
 
-1. Klien mengirim permintaan mutasi `login` ke Auth Service dan menerima string `accessToken` (JWT).
-2. Klien memanggil endpoint di Schedule Service dengan menyertakan header:
-   ```http
-   Authorization: Bearer <accessToken>
-   ```
-3. `AuthGuard` pada Schedule Service mengekstrak token dari request context, kemudian memanggil query `validateToken` ke Auth Service melalui HTTP GraphQL (`AUTH_SERVICE_URL`).
-4. Jika valid, Auth Service merespons dengan data user (`id`, `email`), `req.user` diset, dan request diproses.
-5. Jika token salah, kadaluarsa, atau header tidak ada, Schedule Service langsung mengembalikan error `401 UnauthorizedException`.
+1. Client mengirim `login` ke Auth Service → mendapat `accessToken` (JWT).
+2. Client menyertakan header `Authorization: Bearer <token>` ke setiap request di Schedule Service.
+3. `AuthGuard` global di Schedule Service membaca token, lalu memanggil `validateToken` ke Auth Service via HTTP GraphQL.
+4. Jika valid → Auth Service merespons `{ id, email }` → request dilanjutkan.
+5. Jika tidak valid / expired / tidak ada header → langsung `401 UnauthorizedException`.
 
 ---
 
-## 3. List Environment Variables
+## 3. Environment Variables
 
-Seluruh konfigurasi dikelola melalui environment variables. Berikut daftar lengkap variabel yang digunakan:
+Semua konfigurasi dikelola melalui file `.env` di root project. Salin dari `.env.example` untuk memulai.
 
-| Nama Variabel           | Default Value                                                            | Service Pengguna | Penjelasan                                                  |
-| :---------------------- | :----------------------------------------------------------------------- | :--------------: | :---------------------------------------------------------- |
-| `POSTGRES_USER`         | `postgres`                                                               |     Database     | Username superuser PostgreSQL                               |
-| `POSTGRES_PASSWORD`     | `postgres`                                                               |     Database     | Password superuser PostgreSQL                               |
-| `POSTGRES_PORT`         | `5432`                                                                   |     Database     | Port PostgreSQL pada host                                   |
-| `AUTH_SERVICE_PORT`     | `3001`                                                                   |   Auth Service   | Port HTTP untuk Auth Service                                |
-| `JWT_SECRET`            | `supersecret-healthcare-jwt-key-...`                                     |   Auth Service   | Kunci rahasia untuk menandatangani token JWT                |
-| `JWT_EXPIRES_IN`        | `1h`                                                                     |   Auth Service   | Masa aktif masa berlaku token JWT (misal: `1h`, `7d`)       |
-| `SCHEDULE_SERVICE_PORT` | `3002`                                                                   | Schedule Service | Port HTTP untuk Schedule Service                            |
-| `AUTH_SERVICE_URL`      | `http://auth-service:3001/graphql`                                       | Schedule Service | Endpoint internal GraphQL Auth Service untuk validasi token |
-| `REDIS_PORT`            | `6379`                                                                   |   Host Binding   | Port mapping Redis pada host machine                        |
-| `MAIL_PORT`             | `1025`                                                                   |   Host Binding   | Port mapping SMTP Mailpit pada host                         |
-| `MAIL_UI_PORT`          | `8025`                                                                   |   Host Binding   | Port mapping Web Dashboard Mailpit pada host                |
-| `MAIL_FROM`             | `"Healthcare System <noreply@healthcare.local>"`                         | Schedule Service | Alamat pengirim email notifikasi schedule                   |
+> **Penting**: Jangan commit file `.env` ke repository. File ini sudah terdaftar di `.gitignore`.
+
+| Nama Variabel | Contoh Nilai | Keterangan |
+| :--- | :--- | :--- |
+| `POSTGRES_USER` | `postgres` | Username superuser PostgreSQL |
+| `POSTGRES_PASSWORD` | `postgres` | Password superuser PostgreSQL (ganti di production) |
+| `POSTGRES_PORT` | `5432` | Port PostgreSQL yang diekspos ke host |
+| `AUTH_SERVICE_PORT` | `3001` | Port HTTP Auth Service |
+| `AUTH_DATABASE_URL` | `postgresql://postgres:postgres@postgres:5432/auth_db?schema=public` | Connection string ke `auth_db` (hostname `postgres` merujuk ke container) |
+| `JWT_SECRET` | *(wajib diisi, min. 32 karakter)* | Kunci rahasia untuk signing JWT — **tidak boleh kosong** |
+| `JWT_EXPIRES_IN` | `1h` | Masa berlaku JWT (contoh: `1h`, `7d`, `30m`) |
+| `SCHEDULE_SERVICE_PORT` | `3002` | Port HTTP Schedule Service |
+| `SCHEDULE_DATABASE_URL` | `postgresql://postgres:postgres@postgres:5432/schedule_db?schema=public` | Connection string ke `schedule_db` |
+| `AUTH_SERVICE_URL` | `http://auth-service:3001/graphql` | URL internal Auth Service di dalam docker network |
+| `REDIS_HOST` | `redis` | Hostname Redis di dalam docker network |
+| `REDIS_PORT` | `6379` | Port Redis (host mapping) |
+| `MAIL_HOST` | `mailpit` | Hostname SMTP server di dalam docker network |
+| `MAIL_PORT` | `1025` | Port SMTP Mailpit |
+| `MAIL_UI_PORT` | `8025` | Port Web Dashboard Mailpit (browser) |
+| `MAIL_FROM` | `"Healthcare System <noreply@healthcare.local>"` | Alamat pengirim email notifikasi |
 
 ---
 
 ## 4. Contoh GraphQL Queries & Mutations
 
-### A. Auth Service (Port 3001)
+### A. Auth Service — `http://localhost:3001/graphql`
 
-Akses di: `http://localhost:3001/graphql`
-
-#### 1. Registrasi User Baru (`register`)
-
+#### Register User Baru
 ```graphql
 mutation RegisterUser {
-  register(
-    input: { email: "dokter.tirta@healthcare.local", password: "Password123!" }
-  ) {
+  register(input: {
+    email: "admin@healthcare.local"
+    password: "Password123!"
+  }) {
     accessToken
     user {
       id
       email
       createdAt
-      updatedAt
     }
   }
 }
 ```
 
-#### 2. Login User (`login`)
-
+#### Login User
 ```graphql
 mutation LoginUser {
-  login(
-    input: { email: "dokter.tirta@healthcare.local", password: "Password123!" }
-  ) {
+  login(input: {
+    email: "admin@healthcare.local"
+    password: "Password123!"
+  }) {
     accessToken
     user {
       id
@@ -236,13 +222,10 @@ mutation LoginUser {
 }
 ```
 
-#### 3. Validasi Token (`validateToken`)
-
-Query ini dipanggil otomatis oleh Schedule Service, namun dapat diuji langsung:
-
+#### Validasi Token (dipanggil otomatis oleh Schedule Service)
 ```graphql
 query ValidateToken {
-  validateToken(token: "PASTE_JWT_ACCESS_TOKEN_DI_SINI") {
+  validateToken(token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...") {
     id
     email
   }
@@ -251,27 +234,23 @@ query ValidateToken {
 
 ---
 
-### B. Header Autentikasi untuk Schedule Service
+### B. Schedule Service — `http://localhost:3002/graphql`
 
-Sebelum menjalankan query di **Schedule Service (Port 3002)**, pasang header otentikasi di tab **Headers** (bagian bawah editor Sandbox/Playground atau di Postman):
-
-```json
-{
-  "Authorization": "Bearer PASTE_JWT_ACCESS_TOKEN_DI_SINI"
-}
-```
+> Semua endpoint di Schedule Service **wajib menyertakan header**:
+> ```json
+> { "Authorization": "Bearer <accessToken>" }
+> ```
+> Di Apollo Sandbox: isi di tab **Headers** bagian bawah editor.
 
 ---
 
-### C. Customer Module (Schedule Service - Port 3002)
-
-#### 1. Buat Customer Baru (`createCustomer`)
-
+#### Customer — Buat Customer
 ```graphql
 mutation CreateCustomer {
-  createCustomer(
-    input: { name: "Budi Santoso", email: "budi.santoso@pasien.com" }
-  ) {
+  createCustomer(input: {
+    name: "Budi Santoso"
+    email: "budi@pasien.com"
+  }) {
     id
     name
     email
@@ -280,13 +259,13 @@ mutation CreateCustomer {
 }
 ```
 
-#### 2. Update Customer (`updateCustomer`)
-
+#### Customer — Update Customer
 ```graphql
 mutation UpdateCustomer {
-  updateCustomer(
-    input: { id: "CUSTOMER_UUID_DI_SINI", name: "Budi Santoso, M.Kom" }
-  ) {
+  updateCustomer(input: {
+    id: "CUSTOMER_UUID"
+    name: "Budi Santoso, S.T"
+  }) {
     id
     name
     email
@@ -295,8 +274,7 @@ mutation UpdateCustomer {
 }
 ```
 
-#### 3. Dapatkan Daftar Customer dengan Pagination (`customers`)
-
+#### Customer — Daftar Customer (dengan Pagination)
 ```graphql
 query GetCustomers {
   customers(page: 1, limit: 10) {
@@ -304,7 +282,6 @@ query GetCustomers {
       id
       name
       email
-      createdAt
     }
     meta {
       total
@@ -316,11 +293,10 @@ query GetCustomers {
 }
 ```
 
-#### 4. Dapatkan Detail Customer by ID (`customer`)
-
+#### Customer — Detail Customer by ID
 ```graphql
-query GetCustomerById {
-  customer(id: "CUSTOMER_UUID_DI_SINI") {
+query GetCustomer {
+  customer(id: "CUSTOMER_UUID") {
     id
     name
     email
@@ -330,13 +306,11 @@ query GetCustomerById {
 }
 ```
 
-#### 5. Hapus Customer (`deleteCustomer`)
-
-> _Catatan: Penghapusan akan ditolak bila customer masih memiliki jadwal konsultasi aktif._
-
+#### Customer — Hapus Customer
+> Ditolak jika customer masih memiliki schedule aktif (`400 BadRequestException`).
 ```graphql
 mutation DeleteCustomer {
-  deleteCustomer(id: "CUSTOMER_UUID_DI_SINI") {
+  deleteCustomer(id: "CUSTOMER_UUID") {
     id
     name
     email
@@ -346,13 +320,12 @@ mutation DeleteCustomer {
 
 ---
 
-### D. Doctor Module (Schedule Service - Port 3002)
-
-#### 1. Buat Doctor Baru (`createDoctor`)
-
+#### Doctor — Buat Doctor
 ```graphql
 mutation CreateDoctor {
-  createDoctor(input: { name: "dr. Tirta Mandira Hudhi, Sp.JP" }) {
+  createDoctor(input: {
+    name: "dr. Tirta Mandira Hudhi, Sp.JP"
+  }) {
     id
     name
     createdAt
@@ -360,16 +333,13 @@ mutation CreateDoctor {
 }
 ```
 
-#### 2. Update Doctor (`updateDoctor`)
-
+#### Doctor — Update Doctor
 ```graphql
 mutation UpdateDoctor {
-  updateDoctor(
-    input: {
-      id: "DOCTOR_UUID_DI_SINI"
-      name: "dr. Tirta Mandira Hudhi, Sp.JP, M.Kes"
-    }
-  ) {
+  updateDoctor(input: {
+    id: "DOCTOR_UUID"
+    name: "dr. Tirta Mandira Hudhi, Sp.JP, M.Kes"
+  }) {
     id
     name
     updatedAt
@@ -377,8 +347,7 @@ mutation UpdateDoctor {
 }
 ```
 
-#### 3. Dapatkan Daftar Doctor dengan Pagination (`doctors`)
-
+#### Doctor — Daftar Doctor (dengan Pagination)
 ```graphql
 query GetDoctors {
   doctors(page: 1, limit: 10) {
@@ -397,11 +366,10 @@ query GetDoctors {
 }
 ```
 
-#### 4. Dapatkan Detail Doctor by ID (`doctor`)
-
+#### Doctor — Detail Doctor by ID
 ```graphql
-query GetDoctorById {
-  doctor(id: "DOCTOR_UUID_DI_SINI") {
+query GetDoctor {
+  doctor(id: "DOCTOR_UUID") {
     id
     name
     createdAt
@@ -410,13 +378,11 @@ query GetDoctorById {
 }
 ```
 
-#### 5. Hapus Doctor (`deleteDoctor`)
-
-> _Catatan: Penghapusan akan ditolak bila dokter masih memiliki jadwal konsultasi aktif._
-
+#### Doctor — Hapus Doctor
+> Ditolak jika dokter masih memiliki schedule aktif (`400 BadRequestException`).
 ```graphql
 mutation DeleteDoctor {
-  deleteDoctor(id: "DOCTOR_UUID_DI_SINI") {
+  deleteDoctor(id: "DOCTOR_UUID") {
     id
     name
   }
@@ -425,34 +391,24 @@ mutation DeleteDoctor {
 
 ---
 
-### E. Schedule Module (Schedule Service - Port 3002)
-
-#### 1. Buat Schedule Konsultasi Baru (`createSchedule`)
-
-> _Fitur ini memvalidasi customer & dokter ada di database, memvalidasi dokter tidak bentrok jadwal di jam yang sama, dan otomatis mengirim email konfirmasi ke email customer via BullMQ & Mailpit._
-
+#### Schedule — Buat Jadwal Konsultasi
+> Validasi: customer & doctor harus ada di DB. Dokter tidak boleh double-booking di waktu yang sama (`409 ConflictException`). Email konfirmasi otomatis dikirim ke customer via BullMQ + Mailpit.
 ```graphql
 mutation CreateSchedule {
-  createSchedule(
-    input: {
-      objective: "Pemeriksaan Tekanan Darah dan EKG Jantung"
-      customerId: "CUSTOMER_UUID_DI_SINI"
-      doctorId: "DOCTOR_UUID_DI_SINI"
-      scheduledAt: "2026-11-20T10:00:00.000Z"
-    }
-  ) {
+  createSchedule(input: {
+    objective: "Pemeriksaan Jantung dan EKG Rutin"
+    customerId: "CUSTOMER_UUID"
+    doctorId: "DOCTOR_UUID"
+    scheduledAt: "2026-11-20T10:00:00.000Z"
+  }) {
     id
     objective
     scheduledAt
-    customerId
-    doctorId
     customer {
-      id
       name
       email
     }
     doctor {
-      id
       name
     }
     createdAt
@@ -460,14 +416,13 @@ mutation CreateSchedule {
 }
 ```
 
-#### 2. Dapatkan Daftar Schedules dengan Filter & Pagination (`schedules`)
-
-Filter opsional: `doctorId`, `customerId`, `dateFrom`, `dateTo`.
-
+#### Schedule — Daftar Jadwal (Filter + Pagination)
+> Filter opsional: `doctorId`, `customerId`, `dateFrom`, `dateTo`. Semua bisa dikombinasikan.
 ```graphql
 query GetSchedules {
   schedules(
-    doctorId: "DOCTOR_UUID_DI_SINI"
+    doctorId: "DOCTOR_UUID"
+    customerId: "CUSTOMER_UUID"
     dateFrom: "2026-11-01T00:00:00.000Z"
     dateTo: "2026-11-30T23:59:59.000Z"
     page: 1
@@ -495,11 +450,10 @@ query GetSchedules {
 }
 ```
 
-#### 3. Dapatkan Detail Schedule by ID (`schedule`)
-
+#### Schedule — Detail Jadwal by ID
 ```graphql
-query GetScheduleById {
-  schedule(id: "SCHEDULE_UUID_DI_SINI") {
+query GetSchedule {
+  schedule(id: "SCHEDULE_UUID") {
     id
     objective
     scheduledAt
@@ -516,13 +470,11 @@ query GetScheduleById {
 }
 ```
 
-#### 4. Hapus / Batalkan Schedule (`deleteSchedule`)
-
-> _Menghapus schedule dan memicu pengiriman email pembatalan ke customer via BullMQ & Mailpit._
-
+#### Schedule — Batalkan / Hapus Jadwal
+> Email pemberitahuan pembatalan otomatis dikirim ke customer via BullMQ + Mailpit.
 ```graphql
 mutation DeleteSchedule {
-  deleteSchedule(id: "SCHEDULE_UUID_DI_SINI") {
+  deleteSchedule(id: "SCHEDULE_UUID") {
     id
     objective
     scheduledAt
@@ -538,47 +490,59 @@ mutation DeleteSchedule {
 
 ## 5. Keputusan Desain & Asumsi
 
-1. **Isolasi Database (Database-per-Service)**:
-   - Menggunakan satu server PostgreSQL dengan dua database terpisah (`auth_db` dan `schedule_db`). Setiap service hanya terhubung ke databasenya masing-masing untuk menjaga batas konteks (_bounded context_) arsitektur microservices.
-2. **Pencegahan Bentrok Jadwal (Conflict Prevention)**:
-   - Diterapkan dua lapis pengamanan (_Defense-in-Depth_):
-     - **Lapis Aplikasi (Service Level)**: Query validasi awal di `ScheduleService.createSchedule` yang mencari jadwal eksisting dokter pada waktu yang sama. Jika ada, melempar `ConflictException`.
-     - **Lapis Basis Data (Database Level)**: Constraint `@@unique([doctorId, scheduledAt])` pada tabel `schedules`. Menjamin konsistensi data dari _race condition_ bila terdapat dua request konkuren bersamaan di milidetik yang sama.
-3. **Kebijakan Hapus Customer & Doctor Berjadwal (Delete Handling)**:
-   - Dipilih kebijakan **`Restrict`**.
-   - _Alasan_: Pada sistem rekam medis/klinik, riwayat kunjungan pasien tidak boleh terhapus tiba-tiba secara cascade demi integritas audit medis dan histori pasien. Jika terdapat upaya menghapus customer atau doctor yang memiliki schedule aktif, sistem menolak dengan `BadRequestException` ("Please cancel or reassign schedules first").
-4. **Strategi Caching Redis & Invalidation**:
-   - Query daftar customer, doctor, dan schedule dicache di Redis selama 60 detik.
-   - Setiap mutasi penambahan, perubahan, atau penghapusan otomatis menghapus key cache terkait (`customers:*`, `doctors:*`, `schedules:*`) sehingga respon query berikutnya dijamin selalu mutakhir.
-   - Dilengkapi _graceful fallback_: bila Redis down, API tetap berfungsi normal membaca data langsung dari PostgreSQL.
-5. **Antrean Email Notifikasi (BullMQ Queue)**:
-   - Pengiriman email konfirmasi dan pembatalan schedule diproses secara asinkron di antrean BullMQ (`email-queue`). Mutasi GraphQL langsung mengembalikan hasil tanpa tertahan oleh proses kirim email.
-   - Dilengkapi mock SMTP **Mailpit** sehingga email dapat diinspeksi secara visual melalui browser pada `http://localhost:8025`.
+### Database-per-Service
+Satu container PostgreSQL dengan dua database terpisah (`auth_db` dan `schedule_db`). Setiap service hanya memiliki kredensial ke databasenya sendiri, menjaga isolasi data sesuai prinsip microservices.
+
+### Pencegahan Bentrok Jadwal (Double Booking Prevention)
+Diterapkan dua lapis pengamanan (*defense-in-depth*):
+- **Lapis Aplikasi**: `ScheduleService.createSchedule` mengecek dokter + waktu yang sama sebelum menyimpan. Melempar `ConflictException` jika sudah ada.
+- **Lapis Database**: Constraint `@@unique([doctorId, scheduledAt])` pada tabel `schedules`. Menangani *race condition* bila dua request tiba bersamaan dalam milidetik yang sama, serta mengembalikan `ConflictException` jika Prisma mengembalikan error `P2002`.
+
+### Kebijakan Delete Customer & Doctor (Restrict)
+Dipilih strategi **Restrict**: penghapusan ditolak (`400 BadRequestException`) jika masih ada schedule aktif yang terkait. *Alasan*: Pada sistem klinik, riwayat konsultasi tidak boleh hilang secara cascade demi integritas audit medis dan histori pasien.
+
+### Email Notification Worker (Inline di Schedule Service)
+Email worker (BullMQ + Nodemailer) diintegrasikan sebagai `NotificationModule` di dalam `schedule-service`, bukan container terpisah. *Alasan*: Notifikasi adalah side-effect langsung operasi schedule, bukan domain bisnis mandiri. Pendekatan ini mengurangi kompleksitas orkestrasi Docker dan latensi komunikasi antar-container.
+
+### Redis Caching dengan Graceful Fallback
+Query listing (`customers`, `doctors`, `schedules`) dicache di Redis selama 60 detik. Setiap mutasi (create/update/delete) menginvalidasi cache terkait. Jika Redis tidak tersedia, aplikasi tetap berjalan normal dengan membaca langsung dari PostgreSQL.
+
+### JWT Secret Wajib dari Environment
+Fallback hard-coded untuk `JWT_SECRET` sengaja dihapus dari `docker-compose.yml`. Nilai ini **wajib diisi** di file `.env`, sehingga tidak ada credentials yang ter-commit ke repository dan reviewer/deployment tidak bisa berjalan dengan secret default yang tidak aman.
 
 ---
 
-## 6. Unit Testing & Code Coverage
+## 6. Unit Testing & Coverage
 
-Setiap service telah dilengkapi rangkaian unit test menyeluruh menggunakan Jest, melampaui target minimum 50% coverage.
+Semua unit test ditulis dengan **Jest**, menggunakan mock untuk Prisma, Redis, dan external service.
 
-### Auth Service Tests
-
+### Menjalankan Tests Auth Service
 ```bash
 cd auth-service
 npm test -- --coverage
 ```
+**Hasil**: 14 tests passed | 2 test suites | **87.8% statement coverage**
+- `AuthService`: 100% statements, 100% functions, 100% lines
+- `AuthResolver`: Covered dengan mock service
 
-- **Hasil**: 14 tests passed (2 suites passed)
-- **Coverage**: **87.8%** statement coverage (`AuthService` 100% statements, 100% functions, 100% lines).
-
-### Schedule Service Tests
-
+### Menjalankan Tests Schedule Service
 ```bash
 cd schedule-service
 npm test -- --coverage
 ```
+**Hasil**: 59 tests passed | 7 test suites | **70.81% statement coverage**
+- `CustomerService`: 100% statements & lines
+- `DoctorService`: 100% statements & lines
+- `ScheduleService`: 95.31% statements
+- `AuthGuard`: 93.02% statements
 
-- **Hasil**: 59 tests passed (7 suites passed)
-- **Coverage**: **70.81%** statement coverage (`CustomerService` 100%, `DoctorService` 100%, `ScheduleService` 95.31%, `AuthGuard` 93.02%).
+### Cakupan Tests
+- `auth-service`: `AuthService`, `AuthResolver`
+- `schedule-service`: `CustomerService`, `CustomerResolver`, `DoctorService`, `DoctorResolver`, `ScheduleService`, `ScheduleResolver`, `AuthGuard`
 
 ---
+
+## 7. File Pendukung Testing
+
+- **Contoh GraphQL Lengkap + cURL**: [`graphql-examples.md`](./graphql-examples.md)
+- **Postman Collection**: [`healthcare-scheduling.postman_collection.json`](./healthcare-scheduling.postman_collection.json) — import ke Postman untuk langsung mencoba semua endpoint. Token login otomatis tersimpan ke variabel koleksi.
